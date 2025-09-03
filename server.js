@@ -4900,61 +4900,42 @@ app.get('/api/docs', (req, res) => {
   });
 });
 
-// Start server
-const server = app.listen(PORT, async () => {
-  console.log(`\n${'='.repeat(80)}`);
-  console.log(`BMJ Careers API Server - Optimized with AWS Profile Support`);
-  console.log(`${'='.repeat(80)}`);
-  console.log(`Server running at http://localhost:${PORT}`);
-console.log(`\nEndpoints:`);
-console.log(`  - GET  / ........................... Main page (uses bmj-careers-jobs-api)`);
-console.log(`  - GET  /api/bmj-careers-jobs-api .... PRIMARY: Consolidated Jobs API`);
-console.log(`  - GET  /api/bmj-careers-xml-fallback  FALLBACK: Direct XML conversion`);
-console.log(`  - GET  /api/jobs ................... LEGACY: Redirects to bmj-careers-jobs-api`);
-console.log(`  - POST /api/jobs/refresh ........... Force refresh from source`);
-  console.log(`\n${'='.repeat(80)}`);
-  console.log(`ADMIN CONSOLE:`);
-  console.log(`${'='.repeat(80)}`);
-  console.log(`  - GET  /register ................... Admin registration`);
-  console.log(`  - GET  /login ...................... Admin login`);
-  console.log(`  - GET  /admin ...................... Admin dashboard`);
-  console.log(`  - GET  /api/docs ................... API documentation`);
-  console.log(`\n${'='.repeat(80)}`);
-  console.log(`PUBLIC API ENDPOINTS:`);
-  console.log(`${'='.repeat(80)}`);
-  console.log(`  - GET  /jobs ....................... Get paginated job listings`);
-  console.log(`  - GET  /api/v1/jobs ................ Get all jobs (requires API key)`);
-  console.log(`\nExample API Calls:`);
-  console.log(`  - /jobs?page=1&limit=20`);
-  console.log(`  - /jobs?location=London&sector=Cardiology`);
-  console.log(`  - /jobs?keyword=consultant&sortBy=salary&sortOrder=desc`);
-  console.log(`${'='.repeat(80)}`);
-  console.log(`\nConfiguration:`);
-  console.log(`  - AWS Profile: ${AWS_PROFILE}`);
-  console.log(`  - AWS Region: ${AWS_REGION}`);
-  console.log(`  - DynamoDB Table: ${TABLE_NAME}`);
-  console.log(`  - Cache Duration: ${CACHE_DURATION / 1000} seconds`);
-  console.log(`  - XML Feed: ${BMJ_XML_FEED_URL}`);
-  console.log(`${'='.repeat(80)}`);
-  console.log(`\nAdmin Registration Restrictions:`);
-  console.log(`  - Allowed domain: @bmj.com`);
-  console.log(`  - Allowed emails: ${ALLOWED_ADMIN_EMAILS.join(', ')}`);
-  console.log(`  - Default admin: admin@bmj.com / admin123 (change in production!)`);
-  console.log(`${'='.repeat(80)}\n`);
-  console.log(`  - Authentication: ${USE_COGNITO ? 'AWS Cognito' : 'Local (Fallback)'}`);
-  if (USE_COGNITO) {
-    console.log(`  - Cognito Domain: ${COGNITO_DOMAIN || 'Not configured'}`);
-    console.log(`  - Cognito Client ID: ${COGNITO_CLIENT_ID ? 'Configured' : 'Not configured'}`);
-  }
+app.listen(PORT, async () => {
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`BMJ Careers API Server - Remote Hosting Mode`);
+    console.log(`${'='.repeat(80)}`);
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Available at: https://your-app-name.onrender.com`);
+    console.log(`\nAPI Endpoints:`);
+    console.log(`  - GET  / ........................... Server status`);
+    console.log(`  - GET  /api/bmj-careers-jobs-api .... Jobs API`);
+    console.log(`  - POST /api/track/widget ............. Widget tracking`);
+    console.log(`  - POST /api/track/click .............. Click tracking`);
+    console.log(`  - GET  /api/admin/dashboard .......... Admin dashboard`);
+    console.log(`  - POST /api/auth/login ............... Authentication`);
+    console.log(`  - GET  /health ....................... Health check`);
+    console.log(`${'='.repeat(80)}`);
+    console.log(`\nConfiguration:`);
+    console.log(`  - AWS Profile: ${AWS_PROFILE}`);
+    console.log(`  - AWS Region: ${AWS_REGION}`);
+    console.log(`  - DynamoDB Table: ${TABLE_NAME}`);
+    console.log(`  - Cache Duration: ${CACHE_DURATION / 1000} seconds`);
+    console.log(`  - CORS: Enabled for all origins (remote hosting mode)`);
+    console.log(`${'='.repeat(80)}\n`);
 
-  // Initialize server after it starts listening
-  await initializeServer();
+    // Initialize server after it starts listening
+    await initializeServer();
 });
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-  });
+// Handle graceful shutdown - Updated to work without server variable
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM signal received: saving data and shutting down');
+    await saveTrackingData();
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('SIGINT signal received: saving data and shutting down');
+    await saveTrackingData();
+    process.exit(0);
 });
