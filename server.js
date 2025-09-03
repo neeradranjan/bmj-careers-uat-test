@@ -1311,12 +1311,6 @@ app.get('/api/config', (req, res) => {
     });
 });
 
-const server = app.listen(PORT, () => {
-    console.log(`BMJ Careers Remote Server running on port ${PORT}`);
-    console.log(`Available at: https://your-app-name.onrender.com`);
-    initializeServer();
-});
-
 // Serve static pages
 app.get('/register', (req, res) => {
   res.sendFile(path.join(__dirname, 'register.html'));
@@ -4939,3 +4933,4 @@ process.on('SIGINT', async () => {
     await saveTrackingData();
     process.exit(0);
 });
+
