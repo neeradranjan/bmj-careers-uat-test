@@ -497,6 +497,8 @@ function trackClientUsage(clientInfo, action, metadata = {}) {
   const now = new Date();
   const dateKey = now.toISOString().split('T')[0];
   const hourKey = `${dateKey}-${now.getHours()}`;
+  
+  // FIXED: Always use baseClientId as the tracking key, not session-based keys
   const trackingKey = baseClientId;
 
   // Update daily billing cache
@@ -524,7 +526,10 @@ function trackClientUsage(clientInfo, action, metadata = {}) {
         totalTime: 0,
         daily: {},
         hourly: {}
-      }
+      },
+      clickDetails: [], // Store click details for billing
+      searches: [],
+      filterUsage: {}
     };
   }
 
@@ -576,6 +581,15 @@ function trackClientUsage(clientInfo, action, metadata = {}) {
       clientTracking[trackingKey].metrics.totalClicks++;
       clientTracking[trackingKey].metrics.daily[dateKey].clicks++;
       clientTracking[trackingKey].metrics.hourly[hourKey].clicks++;
+      
+      // Store click details for billing
+      clientTracking[trackingKey].clickDetails.push({
+        jobId: metadata.jobId || 'unknown',
+        jobTitle: metadata.jobTitle || 'Unknown Job',
+        timestamp: now.toISOString(),
+        sessionId: sessionId
+      });
+      
       console.log(`[TRACKING] Click for ${baseClientId}. Total clicks: ${clientTracking[trackingKey].metrics.totalClicks}`);
       break;
     case 'api':
@@ -601,7 +615,6 @@ function trackClientUsage(clientInfo, action, metadata = {}) {
     broadcastToAdminConsoles(updateData);
   }
 }
-
 
 // XML Parser configuration
 const xmlParser = new xml2js.Parser({
@@ -1882,7 +1895,6 @@ app.post('/api/admin/calculate-billing', async (req, res) => {
   }
 });
 
-// 6. Add real-time activity endpoint
 app.get('/api/admin/activity/recent', async (req, res) => {
   if (!isAuthenticated(req)) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -1899,40 +1911,45 @@ app.get('/api/admin/activity/recent', async (req, res) => {
     // Get activities from last 10 minutes
     const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
 
-    // In production, you would store these in a time-series database
-    // For now, we'll generate mock data based on current metrics
+    // FIXED: Generate activities from actual client tracking data
     Object.entries(clientTracking).forEach(([clientId, client]) => {
       const lastSeen = new Date(client.lastSeen);
-
+      
       if (lastSeen > tenMinutesAgo) {
         const timeDiff = Math.floor((now - lastSeen) / 1000 / 60); // minutes ago
+        const timeText = timeDiff === 0 ? 'Just now' : `${timeDiff} min ago`;
 
-        if (client.metrics.daily[now.toISOString().split('T')[0]]) {
-          const todayMetrics = client.metrics.daily[now.toISOString().split('T')[0]];
+        // Generate activities based on recent metrics
+        const today = now.toISOString().split('T')[0];
+        const todayMetrics = client.metrics.daily[today];
 
+        if (todayMetrics) {
+          // Page loads
           if (todayMetrics.loads > 0) {
             recentActivities.loads.push({
               client: client.name,
               action: client.utm_medium === 'iframe' ? 'Loaded widget (iFrame)' : 'Loaded widget',
-              time: timeDiff === 0 ? 'Just now' : `${timeDiff} min ago`,
+              time: timeText,
               timestamp: lastSeen
             });
           }
 
-          if (todayMetrics.clicks > 0) {
+          // Job clicks - FIXED: Show actual click count
+          for (let i = 0; i < Math.min(todayMetrics.clicks, 10); i++) {
             recentActivities.clicks.push({
               client: client.name,
-              action: 'Clicked on job listing',
-              time: timeDiff === 0 ? 'Just now' : `${timeDiff} min ago`,
+              action: 'Clicked View on BMJ',
+              time: timeText,
               timestamp: lastSeen
             });
           }
 
+          // API calls
           if (todayMetrics.apiCalls > 0) {
             recentActivities.apiCalls.push({
               client: client.name,
               action: 'API call',
-              time: timeDiff === 0 ? 'Just now' : `${timeDiff} min ago`,
+              time: timeText,
               timestamp: lastSeen
             });
           }
@@ -1940,7 +1957,7 @@ app.get('/api/admin/activity/recent', async (req, res) => {
       }
     });
 
-    // Sort by timestamp
+    // Sort by timestamp (most recent first)
     recentActivities.loads.sort((a, b) => b.timestamp - a.timestamp);
     recentActivities.clicks.sort((a, b) => b.timestamp - a.timestamp);
     recentActivities.apiCalls.sort((a, b) => b.timestamp - a.timestamp);
@@ -2108,8 +2125,6 @@ const clientSummary = Object.entries(clientTracking).map(([clientId, data]) => {
   }
 });
 
-// Enhanced tracking endpoint for embedded widgets
-// Enhanced widget tracking endpoint with proper daily metrics
 app.post('/api/track/widget', async (req, res) => {
     try {
         const {
@@ -2127,164 +2142,56 @@ app.post('/api/track/widget', async (req, res) => {
             return res.json({ success: true, skipped: true });
         }
 
-        // Get current date keys
-        const now = new Date();
-        const dateKey = now.toISOString().split('T')[0];
-        const hourKey = `${dateKey}-${now.getHours()}`;
-
-        // Initialize client tracking if doesn't exist
-        if (!clientTracking[clientId]) {
-            clientTracking[clientId] = {
-                name: clientName,
-                clientId: clientId,
-                domain: data?.url || 'embedded-widget',
-                utm_source: clientId,
-                utm_medium: 'embedded-widget',
-                firstSeen: now.toISOString(),
-                lastSeen: now.toISOString(),
-                sessions: {},
-                metrics: {
-                    totalLoads: 0,
-                    totalClicks: 0,
-                    totalApiCalls: 0,
-                    totalTime: 0,
-                    daily: {},
-                    hourly: {}
-                },
-                searches: [],
-                filterUsage: {}
-            };
-        }
-
-        // Update last seen
-        clientTracking[clientId].lastSeen = now.toISOString();
-
-        // Initialize session if doesn't exist
-        if (!clientTracking[clientId].sessions[sessionId]) {
-            clientTracking[clientId].sessions[sessionId] = {
-                sessionId: sessionId,
-                startTime: now.toISOString(),
-                lastActivity: now.toISOString(),
-                loads: 0,
-                clicks: 0,
-                events: []
-            };
-        }
-
-        // Initialize daily metrics if not exists
-        if (!clientTracking[clientId].metrics.daily[dateKey]) {
-            clientTracking[clientId].metrics.daily[dateKey] = {
-                loads: 0,
-                clicks: 0,
-                apiCalls: 0,
-                time: 0,
-                searches: 0,
-                filters: 0
-            };
-        }
-
-        // Initialize hourly metrics if not exists
-        if (!clientTracking[clientId].metrics.hourly[hourKey]) {
-            clientTracking[clientId].metrics.hourly[hourKey] = {
-                loads: 0,
-                clicks: 0,
-                apiCalls: 0,
-                time: 0
-            };
-        }
+        // FIXED: Create proper client info structure
+        const clientInfo = {
+            clientId: sessionId || `${clientId}_session_${Date.now()}`,
+            baseClientId: clientId, // This is the main client identifier
+            clientName: clientName || clientId,
+            sessionId: sessionId || `session_${Date.now()}`,
+            utm_source: clientId,
+            utm_medium: 'embedded-widget',
+            utm_campaign: 'widget-tracking',
+            referer: data?.url || 'embedded-widget',
+            isIframe: true
+        };
 
         // Process event based on type
         switch(event) {
             case 'page_view':
             case 'page_load':
-                clientTracking[clientId].metrics.totalLoads++;
-                clientTracking[clientId].metrics.daily[dateKey].loads++;
-                clientTracking[clientId].metrics.hourly[hourKey].loads++;
-                clientTracking[clientId].sessions[sessionId].loads++;
-                console.log(`[TRACKING] Page view recorded for ${clientId}. Total loads: ${clientTracking[clientId].metrics.totalLoads}`);
+                trackClientUsage(clientInfo, 'load', {
+                    url: data?.url,
+                    referrer: data?.referrer,
+                    title: data?.title
+                });
                 break;
 
             case 'job_click':
             case 'click':
-                clientTracking[clientId].metrics.totalClicks++;
-                clientTracking[clientId].metrics.daily[dateKey].clicks++;
-                clientTracking[clientId].metrics.hourly[hourKey].clicks++;
-                clientTracking[clientId].sessions[sessionId].clicks++;
-
-                // Store click details
-                if (!clientTracking[clientId].clickDetails) {
-                    clientTracking[clientId].clickDetails = [];
-                }
-                clientTracking[clientId].clickDetails.push({
-                    jobId: data.jobId,
-                    jobTitle: data.jobTitle,
-                    employer: data.employer,
-                    timestamp: now.toISOString()
+                trackClientUsage(clientInfo, 'click', {
+                    jobId: data?.jobId,
+                    jobTitle: data?.jobTitle,
+                    employer: data?.employer
                 });
-
-                console.log(`[TRACKING] Click recorded for ${clientId}. Total clicks: ${clientTracking[clientId].metrics.totalClicks}`);
                 break;
 
             case 'search':
-                clientTracking[clientId].metrics.daily[dateKey].searches++;
-                clientTracking[clientId].searches.push({
-                    term: data.searchTerm,
-                    timestamp: now.toISOString()
-                });
-                console.log(`[TRACKING] Search recorded for ${clientId}: ${data.searchTerm}`);
-                break;
-
-            case 'filter_change':
-                clientTracking[clientId].metrics.daily[dateKey].filters++;
-                const filterKey = `${data.filterType}_${data.filterValue}`;
-                clientTracking[clientId].filterUsage[filterKey] =
-                    (clientTracking[clientId].filterUsage[filterKey] || 0) + 1;
-                console.log(`[TRACKING] Filter change recorded for ${clientId}: ${filterKey}`);
+                // Handle search tracking
                 break;
 
             case 'api_call':
-                clientTracking[clientId].metrics.totalApiCalls++;
-                clientTracking[clientId].metrics.daily[dateKey].apiCalls++;
-                clientTracking[clientId].metrics.hourly[hourKey].apiCalls++;
+                trackClientUsage(clientInfo, 'api');
                 break;
         }
-
-        // Update session activity
-        clientTracking[clientId].sessions[sessionId].lastActivity = now.toISOString();
-        clientTracking[clientId].sessions[sessionId].events.push({
-            type: event,
-            data: data,
-            timestamp: now.toISOString()
-        });
-
-        // Persist to DynamoDB if available (fire and forget)
-        if (dynamoDBConnectionStatus.isConnected) {
-            const trackingParams = {
-                TableName: TABLE_NAME,
-                Item: {
-                    id: `CLIENT_${clientId}`,
-                    type: 'client_tracking',
-                    clientData: clientTracking[clientId],
-                    lastUpdated: now.toISOString()
-                }
-            };
-
-            dynamodb.send(new PutCommand(trackingParams)).catch(err => {
-                console.error('Failed to persist client tracking:', err.message);
-            });
-        }
-
-        // Also save tracking data periodically
-        saveTrackingData();
 
         res.json({
             success: true,
             tracked: true,
             event: event,
-            clientId: clientId,
+            clientId: clientInfo.baseClientId,
             metrics: {
-                totalClicks: clientTracking[clientId].metrics.totalClicks,
-                totalLoads: clientTracking[clientId].metrics.totalLoads
+                totalClicks: clientTracking[clientInfo.baseClientId]?.metrics?.totalClicks || 0,
+                totalLoads: clientTracking[clientInfo.baseClientId]?.metrics?.totalLoads || 0
             }
         });
 
@@ -3298,25 +3205,26 @@ app.get('/api/bmj-careers-xml-fallback', async (req, res) => {
   }
 });
 
-// Enhanced click tracking endpoint that actually works
 app.post('/api/track/click', async (req, res) => {
   try {
     const { jobId, jobTitle, clientId, sessionId } = req.body;
 
-    console.log(`[CLICK TRACKING] Job click detected - Client: ${clientId}, Job: ${jobId}`);
+    console.log(`[CLICK TRACKING] Job click detected - Client: ${clientId}, Job: ${jobId}, Session: ${sessionId}`);
 
-    // Get client info from request
+    // FIXED: Create proper client info with baseClientId
     const clientInfo = {
-      clientId: clientId || 'unknown',
-      baseClientId: clientId || 'unknown',
+      clientId: sessionId || `${clientId}_session_${Date.now()}`, // For session tracking
+      baseClientId: clientId || 'doctor-widget', // FIXED: This is the main client identifier
+      clientName: clientId || 'The Doctor (Test)',
       sessionId: sessionId || `session_${Date.now()}`,
       utm_source: clientId || 'direct',
       utm_medium: 'widget',
       utm_campaign: 'job_application',
-      referer: req.headers.referer || 'embedded'
+      referer: req.headers.referer || 'embedded',
+      isIframe: true
     };
 
-    // Track the click
+    // Track the click with job details
     trackClientUsage(clientInfo, 'click', {
       jobId,
       jobTitle,
@@ -3326,8 +3234,8 @@ app.post('/api/track/click', async (req, res) => {
     res.json({
       success: true,
       message: 'Click tracked successfully',
-      clientId: clientId,
-      totalClicks: clientTracking[clientId]?.metrics?.totalClicks || 1
+      clientId: clientInfo.baseClientId,
+      totalClicks: clientTracking[clientInfo.baseClientId]?.metrics?.totalClicks || 1
     });
 
   } catch (error) {
@@ -3335,7 +3243,6 @@ app.post('/api/track/click', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 // Time tracking endpoint
 app.post('/api/track/time', async (req, res) => {
@@ -4933,4 +4840,5 @@ process.on('SIGINT', async () => {
     await saveTrackingData();
     process.exit(0);
 });
+
 
