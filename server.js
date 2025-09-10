@@ -3390,51 +3390,6 @@ app.post('/api/track/click', async (req, res) => {
     }
 });
 
-
-// WebSocket for real-time admin updates
-const WebSocket = require('ws');
-const wss = new WebSocket.Server({ noServer: true });
-
-server.on('upgrade', (request, socket, head) => {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-    });
-});
-
-wss.on('connection', (ws) => {
-    console.log('[WS] Admin console connected');
-
-    // Send initial data
-    ws.send(JSON.stringify({
-        type: 'initial',
-        data: Object.values(clientTracking).map(client => ({
-            clientId: client.clientId,
-            metrics: client.metrics
-        }))
-    }));
-
-    // Keep connection alive
-    const interval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-        }
-    }, 30000);
-
-    ws.on('close', () => {
-        clearInterval(interval);
-        console.log('[WS] Admin console disconnected');
-    });
-});
-
-// Broadcast function for real-time updates
-function broadcastToAdminConsoles(data) {
-    wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(data));
-        }
-    });
-}
-
 // Time tracking endpoint
 app.post('/api/track/time', async (req, res) => {
   try {
@@ -5041,6 +4996,35 @@ console.log(`  - POST /api/jobs/refresh ........... Force refresh from source`);
 
   // Initialize server after it starts listening
   await initializeServer();
+});
+
+// Add WebSocket support after server is created
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({ server }); // Use existing server
+
+wss.on('connection', (ws) => {
+    console.log('[WS] Admin console connected');
+
+    // Send initial data
+    ws.send(JSON.stringify({
+        type: 'initial',
+        data: Object.values(clientTracking).map(client => ({
+            clientId: client.clientId,
+            metrics: client.metrics
+        }))
+    }));
+
+    // Keep connection alive
+    const interval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+        }
+    }, 30000);
+
+    ws.on('close', () => {
+        clearInterval(interval);
+        console.log('[WS] Admin console disconnected');
+    });
 });
 
 // Handle graceful shutdown
