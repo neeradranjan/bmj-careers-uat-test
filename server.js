@@ -120,7 +120,6 @@ console.log(`AWS Region: ${AWS_REGION}`);
 console.log(`DynamoDB Table: ${TABLE_NAME}`);
 
 // AWS COGNITO CONFIGURATION
-// AWS COGNITO CONFIGURATION - Update these values
 const USE_COGNITO = true; // Enable Cognito
 const COGNITO_USER_POOL_ID = 'eu-west-1_mTE89jch7';
 const COGNITO_CLIENT_ID = 'okofc02vcimo4cc4hq70pcl1d'; // You need to get this from AWS Console
@@ -132,7 +131,7 @@ const COGNITO_REDIRECT_URI = process.env.COGNITO_REDIRECT_URI || 'http://localho
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 
-// Add AWS Cognito SDK imports at the top
+// Add AWS Cognito SDK imports
 const { CognitoIdentityProviderClient, InitiateAuthCommand, GetUserCommand, ListUsersCommand } = require('@aws-sdk/client-cognito-identity-provider');
 
 
@@ -1305,11 +1304,6 @@ app.get('/api/config', (req, res) => {
     });
 });
 
-const server = app.listen(PORT, () => {
-    console.log(`BMJ Careers Remote Server running on port ${PORT}`);
-    console.log(`Available at: https://your-app-name.onrender.com`);
-    initializeServer();
-});
 
 // Serve static pages
 app.get('/register', (req, res) => {
