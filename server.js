@@ -1,5 +1,3 @@
-//server.js - Fixed version with proper DynamoDB sync and admin restrictions
-
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -21,14 +19,14 @@ const {
   QueryCommand
 } = require('@aws-sdk/lib-dynamodb');
 
-// Import credential provider for AWS Profile support
+//credential provider for AWS Profile support
 const { fromIni } = require('@aws-sdk/credential-providers');
 
 const app = express();
 const PORT = 3000;
 
-// Enable CORS for all origins during development
-// Configure CORS properly
+
+// Configure CORS 
 app.use(cors({
     credentials: true,
     origin: function(origin, callback) {
@@ -55,10 +53,10 @@ app.use((req, res, next) => {
 });
 
 app.use(cors({
-    origin: '*', // Allow all origins for development
+    origin: '*', // Allow all origins
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-session-token', 'x-api-key'],
-    credentials: false // Set to false for cross-origin requests
+    credentials: false 
 }));
 
 // Security headers and cookie configuration
@@ -74,7 +72,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// Add this error handling wrapper in server.js
+
 app.use((err, req, res, next) => {
     console.error('Server Error:', err);
     res.status(500).json({
@@ -83,7 +81,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Add this to prevent unhandled promise rejections
+//prevent unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -91,7 +89,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // ========================================================================
 // AWS CONFIGURATION - Using AWS Profile
 // ========================================================================
-const AWS_PROFILE = 'bmj-dev'; // Your AWS profile name
+const AWS_PROFILE = 'bmj-dev'; 
 const AWS_REGION = 'eu-west-1';
 const TABLE_NAME = 'bmj-careers-jobs-metatadata';
 const STATS_TABLE_NAME = 'bmj-api-stats';
@@ -122,16 +120,16 @@ console.log(`DynamoDB Table: ${TABLE_NAME}`);
 // AWS COGNITO CONFIGURATION
 const USE_COGNITO = true; // Enable Cognito
 const COGNITO_USER_POOL_ID = 'eu-west-1_mTE89jch7';
-const COGNITO_CLIENT_ID = 'okofc02vcimo4cc4hq70pcl1d'; // You need to get this from AWS Console
+const COGNITO_CLIENT_ID = 'okofc02vcimo4cc4hq70pcl1d'; 
 const COGNITO_REGION = 'eu-west-1';
-const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN; // Optional: your-domain.auth.eu-west-1.amazoncognito.com
+const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN; 
 const COGNITO_REDIRECT_URI = process.env.COGNITO_REDIRECT_URI || 'http://localhost:3000/auth/callback' || 'https://bmj-careers-widget.onrender.com/auth/callback';
 
-// Import JWT verification library
+//JWT verification library
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 
-// Add AWS Cognito SDK imports
+//AWS Cognito SDK imports
 const { CognitoIdentityProviderClient, InitiateAuthCommand, GetUserCommand, ListUsersCommand } = require('@aws-sdk/client-cognito-identity-provider');
 
 
@@ -240,7 +238,7 @@ let apiStats = {
   endpoints: {}
 };
 
-// User management storage (replace with database later)
+// User management storage
 let users = {
   // Default admin user (change password in production!)
   'admin@bmj.com': {
