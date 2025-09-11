@@ -1,3 +1,5 @@
+//server.js - Fixed version with proper DynamoDB sync and admin restrictions
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -19,14 +21,14 @@ const {
   QueryCommand
 } = require('@aws-sdk/lib-dynamodb');
 
-//credential provider for AWS Profile support
+// Import credential provider for AWS Profile support
 const { fromIni } = require('@aws-sdk/credential-providers');
 
 const app = express();
 const PORT = 3000;
 
-
-// Configure CORS 
+// Enable CORS for all origins during development
+// Configure CORS properly
 app.use(cors({
     credentials: true,
     origin: function(origin, callback) {
@@ -40,24 +42,18 @@ app.use(cors({
 
 app.use(express.json());
 
+// Security headers
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-session-token, x-api-key');
-
-    if (req.method === 'OPTIONS') {
-        res.sendStatus(200);
-    } else {
-        next();
-    }
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Cache-Control', 'public, max-age=300'); // 5 minute cache
+    next();
 });
 
-app.use(cors({
-    origin: '*', // Allow all origins
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-session-token', 'x-api-key'],
-    credentials: false 
-}));
+// Serve static files from public folder (for CSS)
+app.use(express.static('public'));
 
 // Security headers and cookie configuration
 app.use((req, res, next) => {
@@ -72,7 +68,7 @@ app.use((req, res, next) => {
     next();
 });
 
-
+// Add this error handling wrapper in server.js
 app.use((err, req, res, next) => {
     console.error('Server Error:', err);
     res.status(500).json({
@@ -81,7 +77,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-//prevent unhandled promise rejections
+// Add this to prevent unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -89,7 +85,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // ========================================================================
 // AWS CONFIGURATION - Using AWS Profile
 // ========================================================================
-const AWS_PROFILE = 'bmj-dev'; 
+const AWS_PROFILE = 'bmj-dev'; // Your AWS profile name
 const AWS_REGION = 'eu-west-1';
 const TABLE_NAME = 'bmj-careers-jobs-metatadata';
 const STATS_TABLE_NAME = 'bmj-api-stats';
@@ -118,18 +114,19 @@ console.log(`AWS Region: ${AWS_REGION}`);
 console.log(`DynamoDB Table: ${TABLE_NAME}`);
 
 // AWS COGNITO CONFIGURATION
+// AWS COGNITO CONFIGURATION - Update these values
 const USE_COGNITO = true; // Enable Cognito
 const COGNITO_USER_POOL_ID = 'eu-west-1_mTE89jch7';
-const COGNITO_CLIENT_ID = 'okofc02vcimo4cc4hq70pcl1d'; 
+const COGNITO_CLIENT_ID = 'okofc02vcimo4cc4hq70pcl1d'; // You need to get this from AWS Console
 const COGNITO_REGION = 'eu-west-1';
-const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN; 
+const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN; // Optional: your-domain.auth.eu-west-1.amazoncognito.com
 const COGNITO_REDIRECT_URI = process.env.COGNITO_REDIRECT_URI || 'http://localhost:3000/auth/callback' || 'https://bmj-careers-widget.onrender.com/auth/callback';
 
-//JWT verification library
+// Import JWT verification library
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 
-//AWS Cognito SDK imports
+// Add AWS Cognito SDK imports at the top
 const { CognitoIdentityProviderClient, InitiateAuthCommand, GetUserCommand, ListUsersCommand } = require('@aws-sdk/client-cognito-identity-provider');
 
 
@@ -238,7 +235,7 @@ let apiStats = {
   endpoints: {}
 };
 
-// User management storage
+// User management storage (replace with database later)
 let users = {
   // Default admin user (change password in production!)
   'admin@bmj.com': {
@@ -357,6 +354,36 @@ function getClientFromRequest(req) {
 }
 
 
+// Add this after the existing clientTracking declaration
+let persistentClientData = {
+    // Structure: { clientId: { sessionId: { count, clicks: [], metrics: {}, lastUpdate } } }
+};
+
+// Add these functions after the existing helper functions
+async function loadPersistentClientData() {
+    const fs = require('fs').promises;
+    try {
+        const data = await fs.readFile('persistent-client-data.json', 'utf8');
+        persistentClientData = JSON.parse(data);
+        console.log('[PERSISTENT] Loaded client data for', Object.keys(persistentClientData).length, 'clients');
+    } catch (error) {
+        console.log('[PERSISTENT] No existing data found, starting fresh');
+        persistentClientData = {};
+    }
+}
+
+async function savePersistentClientData() {
+    const fs = require('fs').promises;
+    try {
+        await fs.writeFile('persistent-client-data.json', JSON.stringify(persistentClientData, null, 2));
+        console.log('[PERSISTENT] Saved client data');
+    } catch (error) {
+        console.error('[PERSISTENT] Error saving data:', error);
+    }
+}
+
+
+
 // Add these functions to persist tracking data
 async function saveTrackingData() {
     if (!dynamoDBConnectionStatus.isConnected) {
@@ -437,30 +464,42 @@ async function loadTrackingData() {
     }
 }
 
-// Update initializeServer to load tracking data
+// REPLACE THE EXISTING initializeServer FUNCTION WITH THIS VERSION
 async function initializeServer() {
     console.log('\n========== INITIALIZING SERVER ==========');
 
     try {
+        // Load persistent client data FIRST (critical for billing accuracy)
+        await loadPersistentClientData();
+
         // Test DynamoDB connection
         const dbConnected = await testDynamoDBConnection();
 
         if (dbConnected) {
             console.log('✓ Connected to DynamoDB successfully');
+            await loadAPIStats();
+            await loadTrackingData();
         }
-
-        // Load persisted tracking data
-        await loadTrackingData();
-
-        // Save tracking data every 5 minutes
-        setInterval(saveTrackingData, 5 * 60 * 1000);
 
         // Pre-load jobs data
         console.log('\nPre-loading jobs data...');
         const result = await loadJobsWithCaching(true);
         console.log(`✓ Pre-loaded ${result.jobs.length} jobs from ${result.source}`);
 
+        // Save persistent data every 30 seconds (critical for billing)
+        setInterval(async () => {
+            await savePersistentClientData();
+        }, 30000);
+
+        // Save to DynamoDB every 5 minutes
+        setInterval(async () => {
+            await saveTrackingData();
+        }, 300000);
+
         console.log('\n========== SERVER READY ==========\n');
+        console.log('Failsafe counter system: ACTIVE');
+        console.log('Persistent data auto-save: Every 30 seconds');
+        console.log('DynamoDB sync: Every 5 minutes');
     } catch (error) {
         console.error('Server initialization error:', error);
         console.log('\n========== SERVER STARTED WITH ERRORS ==========\n');
@@ -1276,33 +1315,6 @@ async function initializeServer() {
 // API ENDPOINTS
 // ========================================================================
 
-
-app.get('/', (req, res) => {
-    res.json({
-        message: 'BMJ Careers Remote Server',
-        status: 'running',
-        endpoints: {
-            jobs: '/api/bmj-careers-jobs-api',
-            tracking: '/api/track/widget',
-            admin: '/api/admin/dashboard'
-        },
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.get('/api/config', (req, res) => {
-    res.json({
-        serverUrl: `https://your-app-name.onrender.com`,
-        apiEndpoints: {
-            jobs: '/api/bmj-careers-jobs-api',
-            tracking: '/api/track/widget',
-            click: '/api/track/click',
-            admin: '/api/admin/dashboard'
-        }
-    });
-});
-
-
 // Serve static pages
 app.get('/register', (req, res) => {
   res.sendFile(path.join(__dirname, 'register.html'));
@@ -1997,111 +2009,130 @@ app.get('/api/admin/analytics', async (req, res) => {
   }
 });
 
+// REPLACE THE ENTIRE /api/admin/dashboard ENDPOINT WITH THIS
 app.get('/api/admin/dashboard', async (req, res) => {
-  if (!isAuthenticated(req)) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    // Calculate summary statistics
-    const today = new Date().toISOString().split('T')[0];
-    const last7Days = [];
-    const last30Days = [];
-
-    for (let i = 0; i < 30; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateKey = date.toISOString().split('T')[0];
-
-      if (i < 7) last7Days.push(dateKey);
-      last30Days.push(dateKey);
+    if (!isAuthenticated(req)) {
+        return res.status(401).json({ error: 'Unauthorized' });
     }
 
-// Aggregate client metrics
-const clientSummary = Object.entries(clientTracking).map(([clientId, data]) => {
-  const last7DaysMetrics = { loads: 0, clicks: 0, apiCalls: 0, sessions: 0 };
-  const last30DaysMetrics = { loads: 0, clicks: 0, apiCalls: 0, sessions: 0 };
+    try {
+        const today = new Date().toISOString().split('T')[0];
 
-  last7Days.forEach(date => {
-    if (data.metrics.daily[date]) {
-      last7DaysMetrics.loads += data.metrics.daily[date].loads;
-      last7DaysMetrics.clicks += data.metrics.daily[date].clicks;
-      last7DaysMetrics.apiCalls += data.metrics.daily[date].apiCalls;
-      last7DaysMetrics.sessions += data.metrics.daily[date].sessions ? data.metrics.daily[date].sessions.size : 0;
-    }
-  });
+        // Create final client data - PRIORITIZE FAILSAFE DATA ONLY
+        const finalClientData = {};
 
-  last30Days.forEach(date => {
-    if (data.metrics.daily[date]) {
-      last30DaysMetrics.loads += data.metrics.daily[date].loads;
-      last30DaysMetrics.clicks += data.metrics.daily[date].clicks;
-      last30DaysMetrics.apiCalls += data.metrics.daily[date].apiCalls;
-      last30DaysMetrics.sessions += data.metrics.daily[date].sessions ? data.metrics.daily[date].sessions.size : 0;
-    }
-  });
+        // Process persistent failsafe data FIRST (authoritative for billing)
+        Object.entries(persistentClientData).forEach(([clientId, sessions]) => {
+            // Skip if no valid client ID
+            if (!clientId || clientId === 'unknown' || clientId === 'direct') return;
 
-  return {
-    clientId,
-    name: data.name,
-    domain: data.domain,
-    utm_source: data.utm_source,
-    utm_medium: data.utm_medium,
-    utm_campaign: data.utm_campaign,
-    firstSeen: data.firstSeen,
-    lastSeen: data.lastSeen,
-    totalMetrics: {
-      loads: data.metrics.totalLoads,
-      clicks: data.metrics.totalClicks,
-      apiCalls: data.metrics.totalApiCalls,
-      sessions: data.metrics.totalSessions
-    },
-    last7Days: last7DaysMetrics,
-    last30Days: last30DaysMetrics,
-    todayMetrics: {
-      loads: data.metrics.daily[today]?.loads || 0,
-      clicks: data.metrics.daily[today]?.clicks || 0,
-      apiCalls: data.metrics.daily[today]?.apiCalls || 0,
-      sessions: data.metrics.daily[today]?.sessions ? data.metrics.daily[today].sessions.size : 0
+            const allSessions = Object.values(sessions);
+            const totalClicks = allSessions.reduce((sum, session) => sum + (session.count || 0), 0);
+            const totalSessionsCount = Object.keys(sessions).length;
+            const allClicks = allSessions.flatMap(session => session.clicks || []);
+            const lastActivity = Math.max(...allSessions.map(s => new Date(s.lastUpdate || s.startTime)));
+
+            finalClientData[clientId] = {
+                clientId: clientId,
+                name: allSessions[0]?.clientName || clientId,
+                domain: 'embedded-widget',
+                isIframe: true,
+                sessionCount: totalSessionsCount,
+                totalMetrics: {
+                    loads: 0, // Will be filled from legacy if available
+                    clicks: totalClicks, // AUTHORITATIVE from failsafe
+                    apiCalls: 0,
+                    revenue: totalClicks * 0.50
+                },
+                todayMetrics: {
+                    loads: 0,
+                    clicks: totalClicks, // All clicks assumed today for billing
+                    apiCalls: 0
+                },
+                firstSeen: allSessions[0]?.startTime || new Date().toISOString(),
+                lastSeen: new Date(lastActivity).toISOString(),
+                clickDetails: allClicks,
+                dataSource: 'failsafe', // Mark as authoritative
+                sessions: sessions
+            };
+
+            console.log(`[DASHBOARD] Client ${clientId} - Failsafe clicks: ${totalClicks}`);
+        });
+
+        // Add loads/api calls from legacy data (but NEVER override clicks)
+        Object.entries(clientTracking).forEach(([clientId, data]) => {
+            // Skip invalid client IDs
+            if (!clientId || clientId === 'unknown' || clientId === 'direct') return;
+
+            if (finalClientData[clientId]) {
+                // Client exists in failsafe - only add non-click metrics
+                finalClientData[clientId].totalMetrics.loads = data.metrics?.totalLoads || 0;
+                finalClientData[clientId].totalMetrics.apiCalls = data.metrics?.totalApiCalls || 0;
+                finalClientData[clientId].todayMetrics.loads = data.metrics?.daily?.[today]?.loads || 0;
+                finalClientData[clientId].todayMetrics.apiCalls = data.metrics?.daily?.[today]?.apiCalls || 0;
+                finalClientData[clientId].name = data.name || finalClientData[clientId].name;
+                finalClientData[clientId].domain = data.domain || finalClientData[clientId].domain;
+            } else {
+                // Client only in legacy data (no failsafe data)
+                // Only include if it has meaningful data and valid client ID
+                if ((data.metrics?.totalClicks > 0 || data.metrics?.totalLoads > 0) &&
+                    data.name && data.name !== 'unknown') {
+                    finalClientData[clientId] = {
+                        clientId: clientId,
+                        name: data.name,
+                        domain: data.domain,
+                        isIframe: true,
+                        sessionCount: data.metrics?.totalSessions || 1,
+                        totalMetrics: {
+                            loads: data.metrics?.totalLoads || 0,
+                            clicks: data.metrics?.totalClicks || 0,
+                            apiCalls: data.metrics?.totalApiCalls || 0,
+                            revenue: (data.metrics?.totalClicks || 0) * 0.50
+                        },
+                        todayMetrics: {
+                            loads: data.metrics?.daily?.[today]?.loads || 0,
+                            clicks: data.metrics?.daily?.[today]?.clicks || 0,
+                            apiCalls: data.metrics?.daily?.[today]?.apiCalls || 0
+                        },
+                        firstSeen: data.firstSeen,
+                        lastSeen: data.lastSeen,
+                        dataSource: 'legacy'
+                    };
+                }
+            }
+        });
+
+        const clientSummary = Object.values(finalClientData);
+
+        // Sort by last activity
+        clientSummary.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+
+        const response = {
+            success: true,
+            data: {
+                summary: {
+                    totalClients: clientSummary.length,
+                    activeClientsToday: clientSummary.filter(c =>
+                        c.todayMetrics.clicks > 0 || c.todayMetrics.loads > 0
+                    ).length,
+                    totalLoadsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.loads, 0),
+                    totalClicksToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.clicks, 0),
+                    totalApiCallsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.apiCalls, 0)
+                },
+                clients: clientSummary
+            },
+            timestamp: new Date().toISOString()
+        };
+
+        console.log(`[DASHBOARD] Returning ${clientSummary.length} valid clients (no unknowns)`);
+
+        res.json(response);
+    } catch (error) {
+        console.error('Dashboard error:', error);
+        res.status(500).json({ error: 'Failed to load dashboard data' });
     }
-  };
 });
 
-    // Sort by total usage
-    clientSummary.sort((a, b) =>
-      (b.totalMetrics.loads + b.totalMetrics.clicks + b.totalMetrics.apiCalls) -
-      (a.totalMetrics.loads + a.totalMetrics.clicks + a.totalMetrics.apiCalls)
-    );
-
-    res.json({
-      success: true,
-      data: {
-        summary: {
-          totalClients: Object.keys(clientTracking).length,
-          activeClientsToday: clientSummary.filter(c => c.todayMetrics.loads > 0).length,
-          totalLoadsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.loads, 0),
-          totalClicksToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.clicks, 0),
-          totalApiCallsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.apiCalls, 0)
-        },
-        clients: clientSummary,
-        publicApiKeys: Object.entries(publicApiKeys).map(([key, data]) => ({
-          apiKey: key.substring(0, 8) + '...',
-          fullKey: key, // Include full key for admin use
-          clientId: data.clientId,
-          clientName: data.clientName,
-          createdAt: data.createdAt,
-          totalUsage: data.usage.total || 0,
-          lastUsed: data.usage.lastUsed || null
-        }))
-      }
-    });
-  } catch (error) {
-    console.error('Dashboard error:', error);
-    res.status(500).json({ error: 'Failed to load dashboard data' });
-  }
-});
-
-// Enhanced tracking endpoint for embedded widgets
-// Enhanced widget tracking endpoint with proper daily metrics
 app.post('/api/track/widget', async (req, res) => {
     try {
         const {
@@ -3317,8 +3348,13 @@ app.post('/api/track/click', async (req, res) => {
                     daily: {},
                     hourly: {}
                 },
-                clickDetails: []
+                clickDetails: [] // Initialize empty array
             };
+        }
+
+        // Initialize clickDetails array if it doesn't exist
+        if (!clientTracking[clientId].clickDetails) {
+            clientTracking[clientId].clickDetails = [];
         }
 
         const now = new Date();
@@ -3684,12 +3720,11 @@ app.get('/api/admin/realtime-metrics', authenticateAdmin, async (req, res) => {
         const metrics = [];
 
         // Aggregate metrics for each client
-        const clientEntries = Object.entries(clientTracking);
-        for (const client of Object.values(clientTracking) || []) {
+        Object.entries(clientTracking).forEach(([clientId, client]) => {
             const clientMetrics = {
-                clientId: client.client_id,
-                totalLoads: 0,
-                totalClicks: 0,
+                clientId: clientId,
+                totalLoads: client.metrics?.totalLoads || 0,
+                totalClicks: client.metrics?.totalClicks || 0,
                 todayLoads: 0,
                 todayClicks: 0
             };
@@ -3697,20 +3732,13 @@ app.get('/api/admin/realtime-metrics', authenticateAdmin, async (req, res) => {
             // Calculate metrics from tracking data
             const today = new Date().toISOString().split('T')[0];
 
-            Object.values(clientTracking).forEach(session => {
-                            if (session.clientId === clientId) {
-                                clientMetrics.totalLoads += session.metrics?.totalLoads || 0;
-                                clientMetrics.totalClicks += session.metrics?.totalClicks || 0;
-
-                                // Check if session is from today
-                                const todayMetrics = session.metrics?.daily?.[today] || {};
-                                clientMetrics.todayLoads += todayMetrics.loads || 0;
-                                clientMetrics.todayClicks += todayMetrics.clicks || 0;
-                            }
-                        });
+            // Check if there are today's metrics
+            const todayMetrics = client.metrics?.daily?.[today] || {};
+            clientMetrics.todayLoads = todayMetrics.loads || 0;
+            clientMetrics.todayClicks = todayMetrics.clicks || 0;
 
             metrics.push(clientMetrics);
-        }
+        });
 
         res.json({ metrics });
     } catch (error) {
@@ -4258,96 +4286,284 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
+// REPLACE THE /api/track/failsafe-counter ENDPOINT WITH THIS
+app.post('/api/track/failsafe-counter', async (req, res) => {
+    try {
+        const { clientId, sessionId, count, jobId, jobTitle, employer, timestamp, clickNumber } = req.body;
+
+        // REJECT invalid client IDs immediately
+        if (!clientId || clientId === 'unknown' || clientId === 'direct' || clientId === 'localhost') {
+            console.log(`[FAILSAFE] Rejected invalid client ID: ${clientId}`);
+            return res.json({ success: false, error: 'Invalid client ID' });
+        }
+
+        console.log(`[FAILSAFE] Processing click #${count} from valid client: ${clientId}`);
+
+        // Initialize persistent data structure
+        if (!persistentClientData[clientId]) {
+            persistentClientData[clientId] = {};
+        }
+        if (!persistentClientData[clientId][sessionId]) {
+            persistentClientData[clientId][sessionId] = {
+                count: 0,
+                clicks: [],
+                metrics: {
+                    totalClicks: 0,
+                    totalLoads: 0,
+                    dailyClicks: 0
+                },
+                lastUpdate: timestamp,
+                startTime: timestamp,
+                clientName: clientId
+            };
+        }
+
+        const sessionData = persistentClientData[clientId][sessionId];
+        const previousCount = sessionData.count;
+
+        // Update failsafe counter (ensure monotonic increase)
+        sessionData.count = Math.max(sessionData.count, count);
+        sessionData.metrics.totalClicks = sessionData.count;
+        sessionData.metrics.dailyClicks = sessionData.count;
+        sessionData.lastUpdate = timestamp;
+
+        // Add click details if new
+        if (count > previousCount) {
+            sessionData.clicks.push({
+                jobId,
+                jobTitle,
+                employer,
+                timestamp,
+                clickNumber
+            });
+        }
+
+        // Update daily billing cache
+        updateDailyBilling(clientId, 'click', sessionId);
+
+        // Save persistent data immediately
+        await savePersistentClientData();
+
+        // CRITICAL: Do NOT update legacy clientTracking to prevent conflicts
+        // Legacy tracking can add loads/API calls but clicks are managed by failsafe only
+
+        // Broadcast real-time update to admin consoles
+        const realTimeUpdate = {
+            type: 'failsafe_counter_update',
+            clientId: clientId,
+            sessionId: sessionId,
+            count: sessionData.count,
+            totalClicks: sessionData.count,
+            lastClick: { jobId, jobTitle, employer, timestamp },
+            timestamp: timestamp,
+            previousCount: previousCount
+        };
+
+        broadcastToAdminConsoles(realTimeUpdate);
+
+        console.log(`[FAILSAFE] Successfully updated ${clientId}: ${previousCount} -> ${sessionData.count} clicks`);
+
+        res.json({
+            success: true,
+            message: 'Failsafe counter updated',
+            clientId: clientId,
+            count: sessionData.count,
+            totalClicks: sessionData.count,
+            previousCount: previousCount
+        });
+
+    } catch (error) {
+        console.error('[FAILSAFE COUNTER ERROR]:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+// Failsafe beacon endpoint for reliability
+app.post('/api/track/failsafe-beacon', express.raw({ type: 'application/json' }), async (req, res) => {
+    try {
+        let data;
+        if (typeof req.body === 'string') {
+            data = JSON.parse(req.body);
+        } else if (Buffer.isBuffer(req.body)) {
+            data = JSON.parse(req.body.toString());
+        } else {
+            data = req.body;
+        }
+
+        const { clientId, sessionId, count, timestamp } = data;
+        console.log(`[FAILSAFE BEACON] Received from ${clientId}, count: ${count}`);
+
+        // Quick update for beacon (simplified)
+        if (!persistentClientData[clientId]) {
+            persistentClientData[clientId] = {};
+        }
+        if (!persistentClientData[clientId][sessionId]) {
+            persistentClientData[clientId][sessionId] = {
+                count: 0,
+                clicks: [],
+                lastUpdate: timestamp,
+                startTime: timestamp
+            };
+        }
+
+        persistentClientData[clientId][sessionId].count = Math.max(
+            persistentClientData[clientId][sessionId].count,
+            count
+        );
+        persistentClientData[clientId][sessionId].lastUpdate = timestamp;
+
+        res.status(204).send(); // No content for beacon
+    } catch (error) {
+        console.error('[FAILSAFE BEACON ERROR]:', error);
+        res.status(204).send(); // Still return 204 to not break beacon
+    }
+});
+
+// Periodic update endpoint
+app.post('/api/track/periodic-update', async (req, res) => {
+    try {
+        const { clientId, sessionId, count, totalClicks, lastClick, timestamp } = req.body;
+
+        if (persistentClientData[clientId] && persistentClientData[clientId][sessionId]) {
+            const currentCount = persistentClientData[clientId][sessionId].count;
+            persistentClientData[clientId][sessionId].count = Math.max(currentCount, count || totalClicks || 0);
+            persistentClientData[clientId][sessionId].lastUpdate = timestamp;
+
+            // Broadcast periodic update
+            broadcastToAdminConsoles({
+                type: 'periodic_counter_update',
+                clientId: clientId,
+                sessionId: sessionId,
+                count: persistentClientData[clientId][sessionId].count,
+                lastClick: lastClick,
+                timestamp: timestamp
+            });
+
+            console.log(`[PERIODIC] Updated ${clientId} count: ${persistentClientData[clientId][sessionId].count}`);
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[PERIODIC UPDATE ERROR]:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Admin API endpoints
 app.get('/api/admin/dashboard', async (req, res) => {
-  if (!isAuthenticated(req)) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    // Calculate summary statistics
-    const today = new Date().toISOString().split('T')[0];
-    const last7Days = [];
-    const last30Days = [];
-
-    for (let i = 0; i < 30; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateKey = date.toISOString().split('T')[0];
-
-      if (i < 7) last7Days.push(dateKey);
-      last30Days.push(dateKey);
+    if (!isAuthenticated(req)) {
+        return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Aggregate client metrics
-    const clientSummary = Object.entries(clientTracking).map(([clientId, data]) => {
-      const last7DaysMetrics = { loads: 0, clicks: 0, apiCalls: 0 };
-      const last30DaysMetrics = { loads: 0, clicks: 0, apiCalls: 0 };
+    try {
+        const today = new Date().toISOString().split('T')[0];
 
-      last7Days.forEach(date => {
-        if (data.metrics.daily[date]) {
-          last7DaysMetrics.loads += data.metrics.daily[date].loads;
-          last7DaysMetrics.clicks += data.metrics.daily[date].clicks;
-          last7DaysMetrics.apiCalls += data.metrics.daily[date].apiCalls;
-        }
-      });
+        // Merge persistent failsafe data with legacy tracking
+        const mergedClientData = {};
 
-      last30Days.forEach(date => {
-        if (data.metrics.daily[date]) {
-          last30DaysMetrics.loads += data.metrics.daily[date].loads;
-          last30DaysMetrics.clicks += data.metrics.daily[date].clicks;
-          last30DaysMetrics.apiCalls += data.metrics.daily[date].apiCalls;
-        }
-      });
+        // Process persistent failsafe data first (highest priority)
+        Object.entries(persistentClientData).forEach(([clientId, sessions]) => {
+            const allSessions = Object.values(sessions);
+            const totalClicks = allSessions.reduce((sum, session) => sum + (session.count || 0), 0);
+            const totalSessionsCount = Object.keys(sessions).length;
+            const allClicks = allSessions.flatMap(session => session.clicks || []);
+            const lastActivity = Math.max(...allSessions.map(s => new Date(s.lastUpdate || s.startTime)));
 
-      return {
-        clientId,
-        name: data.name,
-        domain: data.domain,
-        firstSeen: data.firstSeen,
-        lastSeen: data.lastSeen,
-        totalMetrics: {
-          loads: data.metrics.totalLoads,
-          clicks: data.metrics.totalClicks,
-          apiCalls: data.metrics.totalApiCalls
-        },
-        last7Days: last7DaysMetrics,
-        last30Days: last30DaysMetrics,
-        todayMetrics: data.metrics.daily[today] || { loads: 0, clicks: 0, apiCalls: 0 }
-      };
-    });
+            mergedClientData[clientId] = {
+                clientId: clientId,
+                name: sessions[Object.keys(sessions)[0]]?.clientName || clientId,
+                domain: 'embedded-widget',
+                isIframe: true,
+                isTestEnvironment: clientId.includes('localhost') || clientId.includes('test'),
+                sessionCount: totalSessionsCount,
+                totalMetrics: {
+                    loads: 0, // Will be updated from legacy data
+                    clicks: totalClicks,
+                    apiCalls: 0,
+                    revenue: totalClicks * 0.50
+                },
+                todayMetrics: {
+                    loads: 0,
+                    clicks: totalClicks, // Assuming all clicks are from today for now
+                    apiCalls: 0
+                },
+                firstSeen: allSessions[0]?.startTime || new Date().toISOString(),
+                lastSeen: new Date(lastActivity).toISOString(),
+                clickDetails: allClicks,
+                persistentData: true, // Flag to indicate this has failsafe data
+                sessions: sessions
+            };
+        });
 
-    // Sort by total usage
-    clientSummary.sort((a, b) =>
-      (b.totalMetrics.loads + b.totalMetrics.clicks + b.totalMetrics.apiCalls) -
-      (a.totalMetrics.loads + a.totalMetrics.clicks + a.totalMetrics.apiCalls)
-    );
+        // Merge with legacy tracking data
+        Object.entries(clientTracking).forEach(([clientId, data]) => {
+            if (mergedClientData[clientId]) {
+                // Client exists in failsafe data - merge additional metrics
+                mergedClientData[clientId].totalMetrics.loads = data.metrics?.totalLoads || 0;
+                mergedClientData[clientId].totalMetrics.apiCalls = data.metrics?.totalApiCalls || 0;
+                mergedClientData[clientId].todayMetrics.loads = data.metrics?.daily?.[today]?.loads || 0;
+                mergedClientData[clientId].todayMetrics.apiCalls = data.metrics?.daily?.[today]?.apiCalls || 0;
+                mergedClientData[clientId].name = data.name || mergedClientData[clientId].name;
+                mergedClientData[clientId].domain = data.domain || mergedClientData[clientId].domain;
 
-    res.json({
-      success: true,
-      data: {
-        summary: {
-          totalClients: Object.keys(clientTracking).length,
-          activeClientsToday: clientSummary.filter(c => c.todayMetrics.loads > 0).length,
-          totalLoadsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.loads, 0),
-          totalClicksToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.clicks, 0),
-          totalApiCallsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.apiCalls, 0)
-        },
-        clients: clientSummary,
-        publicApiKeys: Object.entries(publicApiKeys).map(([key, data]) => ({
-          apiKey: key.substring(0, 8) + '...',
-          clientId: data.clientId,
-          clientName: data.clientName,
-          createdAt: data.createdAt,
-          totalUsage: data.usage.total || 0,
-          lastUsed: data.usage.lastUsed || null
-        }))
-      }
-    });
-  } catch (error) {
-    console.error('Dashboard error:', error);
-    res.status(500).json({ error: 'Failed to load dashboard data' });
-  }
+                // Use failsafe click count as authoritative source
+                console.log(`[DASHBOARD] Client ${clientId} - Failsafe: ${mergedClientData[clientId].totalMetrics.clicks}, Legacy: ${data.metrics?.totalClicks || 0}`);
+            } else {
+                // Client only exists in legacy data
+                mergedClientData[clientId] = {
+                    clientId: clientId,
+                    name: data.name,
+                    domain: data.domain,
+                    isIframe: true,
+                    sessionCount: data.metrics?.totalSessions || 1,
+                    totalMetrics: {
+                        loads: data.metrics?.totalLoads || 0,
+                        clicks: data.metrics?.totalClicks || 0,
+                        apiCalls: data.metrics?.totalApiCalls || 0,
+                        revenue: (data.metrics?.totalClicks || 0) * 0.50
+                    },
+                    todayMetrics: {
+                        loads: data.metrics?.daily?.[today]?.loads || 0,
+                        clicks: data.metrics?.daily?.[today]?.clicks || 0,
+                        apiCalls: data.metrics?.daily?.[today]?.apiCalls || 0
+                    },
+                    firstSeen: data.firstSeen,
+                    lastSeen: data.lastSeen,
+                    persistentData: false
+                };
+            }
+        });
+
+        const clientSummary = Object.values(mergedClientData);
+
+        // Sort by last activity
+        clientSummary.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+
+        const response = {
+            success: true,
+            data: {
+                summary: {
+                    totalClients: clientSummary.length,
+                    activeClientsToday: clientSummary.filter(c => c.todayMetrics.clicks > 0 || c.todayMetrics.loads > 0).length,
+                    totalLoadsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.loads, 0),
+                    totalClicksToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.clicks, 0),
+                    totalApiCallsToday: clientSummary.reduce((sum, c) => sum + c.todayMetrics.apiCalls, 0)
+                },
+                clients: clientSummary,
+                persistentDataClients: Object.keys(persistentClientData).length,
+                legacyDataClients: Object.keys(clientTracking).length
+            },
+            timestamp: new Date().toISOString()
+        };
+
+        console.log(`[DASHBOARD] Returning ${clientSummary.length} clients - Persistent: ${Object.keys(persistentClientData).length}, Legacy: ${Object.keys(clientTracking).length}`);
+
+        res.json(response);
+    } catch (error) {
+        console.error('Enhanced dashboard error:', error);
+        res.status(500).json({ error: 'Failed to load dashboard data' });
+    }
 });
 
 app.get('/api/admin/client/:clientId', async (req, res) => {
